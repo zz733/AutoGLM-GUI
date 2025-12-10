@@ -57,13 +57,6 @@ uv run autoglm-gui --base-url http://localhost:8080/v1
 3. **对话** - 描述你想要做什么（例如："打开微信，找到张三的聊天记录"）
 4. **观察** - Agent 会逐步执行操作
 
-### API 配置
-
-界面会提示你配置：
-- **Base URL** - 你的 OpenAI 兼容 API 地址（如 `http://localhost:8080/v1`）
-- **API Key** - API 密钥（本地模型可留空）
-- **Model** - 模型名称（如 `gpt-4o`、`claude-3-5-sonnet`）
-
 ## 🛠️ 开发指南
 
 ```bash

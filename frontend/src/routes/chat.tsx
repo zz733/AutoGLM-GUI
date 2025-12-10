@@ -40,6 +40,10 @@ function ChatComponent() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const screenshotFetchingRef = useRef(false);
 
+  // 用于追踪当前流式消息的最新数据，避免状态更新竞态
+  const currentThinkingRef = useRef<string[]>([]);
+  const currentActionsRef = useRef<any[]>([]);
+
   // 滚动到底部
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -128,6 +132,10 @@ function ChatComponent() {
     setLoading(true);
     setError(null);
 
+    // 重置当前流式消息的 ref
+    currentThinkingRef.current = [];
+    currentActionsRef.current = [];
+
     // 创建占位 Agent 消息
     const agentMessageId = (Date.now() + 1).toString();
     const agentMessage: Message = {
@@ -147,26 +155,24 @@ function ChatComponent() {
       // onStep
       (event: StepEvent) => {
         console.log('[Chat] Processing step event:', event);
-        setMessages(prev => {
-          const targetMsg = prev.find(msg => msg.id === agentMessageId);
-          if (!targetMsg) return prev;
 
-          const newThinking = [...(targetMsg.thinking || []), event.thinking];
-          const newActions = [...(targetMsg.actions || []), event.action];
+        // 先更新 ref（这是同步的，不会有竞态）
+        currentThinkingRef.current.push(event.thinking);
+        currentActionsRef.current.push(event.action);
 
-          const updated = prev.map(msg =>
+        // 再基于 ref 更新状态
+        setMessages(prev =>
+          prev.map(msg =>
             msg.id === agentMessageId
               ? {
                   ...msg,
-                  thinking: newThinking,
-                  actions: newActions,
+                  thinking: [...currentThinkingRef.current],
+                  actions: [...currentActionsRef.current],
                   steps: event.step,
                 }
               : msg
-          );
-          console.log('[Chat] Updated messages:', updated);
-          return updated;
-        });
+          )
+        );
       },
       // onDone
       (event: DoneEvent) => {
@@ -360,38 +366,36 @@ function ChatComponent() {
       </div>
 
       {/* Screenshot Display */}
-      <div className="flex flex-col w-full max-w-xs h-[750px] border border-gray-200 dark:border-gray-700 rounded-2xl shadow-lg bg-white dark:bg-gray-800 overflow-hidden">
-        <div className="flex-1 flex items-center justify-center p-4 overflow-auto bg-gray-50 dark:bg-gray-900">
-          {screenshot && screenshot.success ? (
-            <div className="relative w-full h-full flex items-center justify-center">
-              <img
-                src={`data:image/png;base64,${screenshot.image}`}
-                alt="Device Screenshot"
-                className="max-w-full max-h-full object-contain rounded-lg shadow-md"
-                style={{
-                  width: screenshot.width > screenshot.height ? '100%' : 'auto',
-                  height:
-                    screenshot.width > screenshot.height ? 'auto' : '100%',
-                }}
-              />
-              {screenshot.is_sensitive && (
-                <div className="absolute top-2 right-2 px-2 py-1 bg-yellow-500 text-white text-xs rounded">
-                  敏感内容
-                </div>
-              )}
-            </div>
-          ) : screenshot?.error ? (
-            <div className="text-center text-red-500 dark:text-red-400">
-              <p className="mb-2">截图失败</p>
-              <p className="text-xs">{screenshot.error}</p>
-            </div>
-          ) : (
-            <div className="text-center text-gray-500 dark:text-gray-400">
-              <div className="w-8 h-8 border-4 border-gray-300 border-t-blue-500 rounded-full animate-spin mx-auto mb-2" />
-              <p>加载中...</p>
-            </div>
-          )}
-        </div>
+      <div className="w-full max-w-xs h-[750px] border border-gray-200 dark:border-gray-700 rounded-2xl shadow-lg bg-white dark:bg-gray-800 flex items-center justify-center overflow-hidden">
+        {screenshot && screenshot.success ? (
+          <div className="relative w-full h-full flex items-center justify-center">
+            <img
+              src={`data:image/png;base64,${screenshot.image}`}
+              alt="Device Screenshot"
+              className="max-w-full max-h-full object-contain"
+              style={{
+                width: screenshot.width > screenshot.height ? '100%' : 'auto',
+                height:
+                  screenshot.width > screenshot.height ? 'auto' : '100%',
+              }}
+            />
+            {screenshot.is_sensitive && (
+              <div className="absolute top-2 right-2 px-2 py-1 bg-yellow-500 text-white text-xs rounded">
+                敏感内容
+              </div>
+            )}
+          </div>
+        ) : screenshot?.error ? (
+          <div className="text-center text-red-500 dark:text-red-400">
+            <p className="mb-2">截图失败</p>
+            <p className="text-xs">{screenshot.error}</p>
+          </div>
+        ) : (
+          <div className="text-center text-gray-500 dark:text-gray-400">
+            <div className="w-8 h-8 border-4 border-gray-300 border-t-blue-500 rounded-full animate-spin mx-auto mb-2" />
+            <p>加载中...</p>
+          </div>
+        )}
       </div>
     </div>
   );

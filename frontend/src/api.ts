@@ -91,6 +91,7 @@ export function sendMessageStream(
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let eventType = 'message'; // 移到外部，跨 chunks 保持状态
 
       while (true) {
         const { done, value } = await reader.read();
@@ -102,7 +103,6 @@ export function sendMessageStream(
         // 保留最后一行（可能不完整）
         buffer = lines.pop() || '';
 
-        let eventType = 'message';
         for (const line of lines) {
           if (line.startsWith('event: ')) {
             eventType = line.slice(7).trim();
@@ -111,10 +111,13 @@ export function sendMessageStream(
               const data = JSON.parse(line.slice(6));
 
               if (eventType === 'step') {
+                console.log('[SSE] Received step event:', data);
                 onStep(data as StepEvent);
               } else if (eventType === 'done') {
+                console.log('[SSE] Received done event:', data);
                 onDone(data as DoneEvent);
               } else if (eventType === 'error') {
+                console.log('[SSE] Received error event:', data);
                 onError(data as ErrorEvent);
               }
             } catch (e) {
