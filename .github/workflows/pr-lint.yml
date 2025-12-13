@@ -1,0 +1,254 @@
+name: PR Lint & Format Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main, master]
+
+permissions:
+  contents: read
+  pull-requests: write  # 用于在 PR 中评论结果
+
+jobs:
+  lint-and-format:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Set up pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install backend dependencies
+        run: |
+          echo "📦 Installing backend dependencies..."
+          uv sync --dev
+
+      - name: Install frontend dependencies
+        run: |
+          echo "📦 Installing frontend dependencies..."
+          cd frontend
+          pnpm install
+          cd ..
+
+      - name: Run unified lint script (check-only mode)
+        run: |
+          echo "🚀 Running unified lint script in check-only mode..."
+          uv run python scripts/lint.py --check-only
+
+      - name: Run backend lint and format check
+        if: always()
+        run: |
+          echo "🐍 Checking backend Python code..."
+          uv run ruff check --output-format=github
+
+          echo "🎨 Checking backend Python format..."
+          uv run ruff format --check --diff
+
+      - name: Run frontend lint and format check
+        if: always()
+        run: |
+          echo "📱 Checking frontend JavaScript/TypeScript code..."
+          cd frontend
+          pnpm lint
+
+          echo "🎨 Checking frontend format..."
+          pnpm format:check
+
+          echo "🔷 Running TypeScript type check..."
+          pnpm type-check
+          cd ..
+
+      - name: Check for uncommitted changes
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "❌ There are uncommitted changes after running formatters!"
+            echo "Please run the following locally to fix:"
+            echo "  uv run python scripts/lint.py"
+            echo ""
+            echo "Or run the individual commands:"
+            echo "  Backend: uv run ruff check --fix && uv run ruff format"
+            echo "  Frontend: cd frontend && pnpm lint --fix && pnpm format"
+            echo ""
+            echo "Files with changes:"
+            git status --porcelain
+            exit 1
+          else
+            echo "✅ No formatting changes detected"
+          fi
+
+      - name: Comment PR with results
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('🚀 Lint & Format Check Results')
+            );
+
+            const status = '${{ job.status }}' === 'success' ? '✅ PASSED' : '❌ FAILED';
+            const color = '${{ job.status }}' === 'success' ? 'green' : 'red';
+
+            const commentBody = `
+            ## 🚀 Lint & Format Check Results: ${status}
+
+            ### What was checked:
+            - 🐍 **Backend**: Ruff linting + formatting
+            - 📱 **Frontend**: ESLint + Prettier + TypeScript types
+            - 🔧 **Unified**: Custom lint script validation
+
+            ${'${{ job.status }}' === 'success' ? `
+            ### ✅ All checks passed!
+            Your code follows the project's style guidelines.
+
+            ### Checks performed:
+            - Backend Ruff lint ✅
+            - Backend Ruff format ✅
+            - Frontend ESLint ✅
+            - Frontend Prettier format ✅
+            - Frontend TypeScript types ✅
+            - Unified lint script ✅
+            ` : `
+            ### ❌ Some checks failed!
+
+            #### How to fix:
+            1. Run locally to auto-fix most issues:
+            \`\`\`bash
+            uv run python scripts/lint.py
+            \`\`\`
+
+            2. Commit the fixes and push:
+            \`\`\`bash
+            git add .
+            git commit -m "fix: apply lint and format fixes"
+            git push
+            \`\`\`
+
+            3. The checks will run again automatically.
+
+            #### Individual fix commands:
+            **Backend:**
+            \`\`\`bash
+            uv run ruff check --fix
+            uv run ruff format
+            \`\`\`
+
+            **Frontend:**
+            \`\`\`bash
+            cd frontend
+            pnpm lint --fix
+            pnpm format
+            cd ..
+            \`\`\`
+            `}
+
+            ---
+            *This is an automated check. For questions, ask in the PR discussion.*
+            `;
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody,
+              });
+            }
+
+  # 构建任务 - 仅在 lint 通过后运行
+  build:
+    name: Build Check
+    runs-on: ubuntu-latest
+    needs: lint-and-format
+    if: always() && needs.lint-and-format.result == 'success'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Set up pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          pnpm install
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          pnpm build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 7
